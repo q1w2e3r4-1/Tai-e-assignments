@@ -26,14 +26,7 @@ import pascal.taie.analysis.dataflow.analysis.AbstractDataflowAnalysis;
 import pascal.taie.analysis.graph.cfg.CFG;
 import pascal.taie.config.AnalysisConfig;
 import pascal.taie.ir.IR;
-import pascal.taie.ir.exp.ArithmeticExp;
-import pascal.taie.ir.exp.BinaryExp;
-import pascal.taie.ir.exp.BitwiseExp;
-import pascal.taie.ir.exp.ConditionExp;
-import pascal.taie.ir.exp.Exp;
-import pascal.taie.ir.exp.IntLiteral;
-import pascal.taie.ir.exp.ShiftExp;
-import pascal.taie.ir.exp.Var;
+import pascal.taie.ir.exp.*;
 import pascal.taie.ir.stmt.DefinitionStmt;
 import pascal.taie.ir.stmt.Stmt;
 import pascal.taie.language.type.PrimitiveType;
@@ -56,33 +49,84 @@ public class ConstantPropagation extends
 
     @Override
     public CPFact newBoundaryFact(CFG<Stmt> cfg) {
-        // TODO - finish me
-        return null;
+        CPFact fact = new CPFact();
+        for(Var param: cfg.getIR().getParams()) {
+            if(canHoldInt(param)){
+                fact.update(param, Value.getNAC());
+            }
+        }
+        return fact;
     }
 
     @Override
     public CPFact newInitialFact() {
-        // TODO - finish me
-        return null;
+        return new CPFact();
     }
 
     @Override
     public void meetInto(CPFact fact, CPFact target) {
-        // TODO - finish me
+        for(Var var: fact.keySet()){
+            Value v1 = fact.get(var);
+            Value v2 = target.get(var);
+            target.update(var, meetValue(v1, v2));
+        }
     }
 
     /**
      * Meets two Values.
      */
     public Value meetValue(Value v1, Value v2) {
-        // TODO - finish me
-        return null;
+        if(v1.isNAC() || v2.isNAC()){
+            return Value.getNAC();
+        }
+
+        if(v1.isUndef()) return v2;
+        if(v2.isUndef()) return v1;
+
+        assert(v1.isConstant() && v2.isConstant());
+
+        if(v1 == v2){
+            return v1;
+        }
+        else{
+            return Value.getNAC();
+        }
     }
 
     @Override
     public boolean transferNode(Stmt stmt, CPFact in, CPFact out) {
-        // TODO - finish me
-        return false;
+        System.err.println("haha");
+        if(stmt instanceof DefinitionStmt<?,?>){
+            System.out.println(stmt.toString());
+            // 注意这里使用的都是DefinitionStmt<LValue, RValue>的方法，因为stmt的get和def一个是Optional一个是数组，而stmt的use exp是树状结构
+            CPFact result = in.copy();
+            Var def = (Var)((DefinitionStmt<?, ?>) stmt).getLValue();
+            RValue exp = ((DefinitionStmt<?, ?>) stmt).getRValue();
+            if(def != null){
+                // 我们只分析赋值语句 (有一个左值的语句)
+                result.update(def, evaluate(exp, result));
+                if(result.equals(out)){
+                    return false;
+                }
+                else{
+                    out.copyFrom(result);
+                    return true;
+                }
+            }
+            else{
+                // 都没有赋值还算它干嘛，直接跳过
+                return false;
+            }
+        }
+        else{
+            if(in.equals(out)){
+                return false;
+            }
+            else{
+                out.copyFrom(in);
+                return true;
+            }
+        }
     }
 
     /**
@@ -111,7 +155,78 @@ public class ConstantPropagation extends
      * @return the resulting {@link Value}
      */
     public static Value evaluate(Exp exp, CPFact in) {
-        // TODO - finish me
-        return null;
+        // BinaryExp 的两个操作数都是 Var 类型的
+        if(exp instanceof IntLiteral){
+            return Value.makeConstant(((IntLiteral) exp).getValue());
+        }
+        else if(exp instanceof Var){
+            return in.get((Var)exp);
+        }
+        else if(exp instanceof BinaryExp){
+            Value op1 = in.get(((BinaryExp) exp).getOperand1());
+            Value op2 = in.get(((BinaryExp) exp).getOperand2());
+            if(op1.isConstant() && op2.isConstant()){
+                return calculate(op1, op2, (BinaryExp)exp);
+            }
+            else if(op1.isNAC() || op2.isNAC()){
+                return Value.getNAC();
+            }
+            else{
+                return Value.getUndef();
+            }
+        }
+        else{
+            // Inter-procedural .etc
+//            System.out.println("Another exp type???");
+            return Value.getNAC();
+        }
+    }
+
+    public static Value calculate(Value op1, Value op2, BinaryExp exp){
+        int x = op1.getConstant();
+        int y = op2.getConstant();
+
+        if(exp instanceof ArithmeticExp){
+            ArithmeticExp.Op op = ((ArithmeticExp) exp).getOperator();
+            return switch (op) {
+                case ADD -> Value.makeConstant(x + y);
+                case SUB -> Value.makeConstant(x - y);
+                case MUL -> Value.makeConstant(x * y);
+                case DIV -> y == 0? Value.getUndef() : Value.makeConstant(x / y);
+                case REM -> y == 0? Value.getUndef() : Value.makeConstant(x % y);
+            };
+        }
+        else if(exp instanceof BitwiseExp){
+            BitwiseExp.Op op = ((BitwiseExp) exp).getOperator();
+            return switch (op) {
+                case OR -> Value.makeConstant(x | y);
+                case AND -> Value.makeConstant(x & y);
+                case XOR -> Value.makeConstant(x ^ y);
+            };
+        }
+        else if(exp instanceof ShiftExp){
+            ShiftExp.Op op = ((ShiftExp) exp).getOperator();
+            return switch (op) {
+                case SHL -> Value.makeConstant(x << y);
+                case SHR -> Value.makeConstant(x >> y);
+                case USHR -> Value.makeConstant(x >>> y);
+            };
+        }
+        else if(exp instanceof ConditionExp){
+            ConditionExp.Op op = ((ConditionExp) exp).getOperator();
+            boolean b = switch (op) {
+                case EQ -> x == y;
+                case NE -> x != y;
+                case GT -> x > y;
+                case GE -> x >= y;
+                case LT -> x < y;
+                case LE -> x <= y;
+            };
+            return Value.makeConstant(b? 1 : 0);
+        }
+        else{
+            System.out.println("Unknown type in calculate");
+            return Value.getNAC();
+        }
     }
 }
