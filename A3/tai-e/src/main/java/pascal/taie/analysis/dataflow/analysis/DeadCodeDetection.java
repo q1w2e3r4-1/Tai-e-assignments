@@ -59,6 +59,7 @@ public class DeadCodeDetection extends MethodAnalysis {
 
     @Override
     public Set<Stmt> analyze(IR ir) {
+        System.out.println(123);
         // obtain CFG
         CFG<Stmt> cfg = ir.getResult(CFGBuilder.ID);
         // obtain result of constant propagation
@@ -70,6 +71,7 @@ public class DeadCodeDetection extends MethodAnalysis {
         // keep statements (dead code) sorted in the resulting set
         Set<Stmt> deadCode = new TreeSet<>(Comparator.comparing(Stmt::getIndex));
         // TODO - finish me
+        System.out.println(deadCode);
         // Your task is to recognize dead code in ir and add it to deadCode
         return deadCode;
     }
